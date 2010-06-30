@@ -17,6 +17,7 @@ use IO::Socket::INET;
 my $addr = shift;
 my $mode = shift || "display";
 my ($from, $to);
+my (@delete, $search, $search_type, $search_output, $search_regex);
 
 if ($mode eq "display") {
     undef $mode if @ARGV;
@@ -26,8 +27,25 @@ if ($mode eq "display") {
     undef $mode if $from < 6 || $from > 17;
     undef $mode if $to   < 6 || $to   > 17;
     print STDERR "ERROR: parameters out of range\n\n" unless $mode;
+} elsif ($mode eq 'delete') { # mmucklo - delete: a useful function we implemented at Oodle, Inc.
+    @delete = @ARGV;
+    @ARGV = ();
 } elsif ($mode eq 'dump') {
     ;
+} elsif ($mode eq 'search') { # mmucklo - search: a useful function we implemented at Oodle, Inc.
+    $search_type = shift;
+    $search_output = shift;
+    $search_regex = shift;
+    if (!$search_type || !$search_output || !$search_regex)
+    {
+        print STDERR "ERROR: wrong parameters for search\n";
+        exit 1;
+    }
+    if ($search_type ne 'value' && $search_type ne 'key')
+    {
+        print STDERR "ERROR: unknown search type: $search_type\r\n";
+        exit 1;
+    }
 } elsif ($mode eq 'stats') {
     ;
 } else {
@@ -41,7 +59,14 @@ die
        memcached-tool 10.0.0.5:11211 display    # shows slabs
        memcached-tool 10.0.0.5:11211            # same.  (default is display)
        memcached-tool 10.0.0.5:11211 stats      # shows general stats
+       memcached-tool 10.0.0.5:11211 delete key1 key2 key3 ...        # deletes key(s)
        memcached-tool 10.0.0.5:11211 dump       # dumps keys and values
+
+       memcached-tool 10.0.0.5:11211 search key key <key-regex>       # searches for key, outputs key
+       memcached-tool 10.0.0.5:11211 search value key <value-regex>   # searches for value, outputs key
+       memcached-tool 10.0.0.5:11211 search key value <key-regex>     # searches for key, outputs value
+       memcached-tool 10.0.0.5:11211 search value value <value-regex> # searches for value, outputs value
+       memcached-tool 10.0.0.5:11211 search key key-value <key-regex> # searches for key, outputs \"key\\r\\nvalue\"
 " unless $addr && $mode;
 
 
@@ -105,6 +130,93 @@ if ($mode eq 'dump') {
                 $_ = <$sock>;
             }
         }
+    }
+    exit;
+}
+
+if ($mode eq 'search') {
+    my %items;
+    my $totalitems;
+
+    print $sock "stats items\r\n";
+
+    while (<$sock>) {
+        last if /^END/;
+        if (/^STAT items:(\d*):number (\d*)/) {
+            $items{$1} = $2;
+            $totalitems += $2;
+        }
+    }
+
+    foreach my $bucket (sort(keys(%items))) {
+        print $sock "stats cachedump $bucket $items{$bucket} 1\r\n";
+        my %keyexp;
+        while (<$sock>) {
+            last if /^END/;
+            # return format looks like this
+            # ITEM foo [6 b; 1176415152 s]
+            if (/^ITEM (\S+) \[.* (\d+) s\]/) {
+                $keyexp{$1} = $2;
+            }
+        }
+
+        foreach my $k (keys(%keyexp)) {
+            print $sock "get $k\r\n";
+            my $response = <$sock>;
+            if ($response =~ /VALUE (\S+) (\d+) (\d+)/) {
+                my $flags = $2;
+                my $len = $3;
+                my $val;
+                read $sock, $val, $len;
+                my $search_match = 0;
+                if ($search_type eq 'key' &&
+                    $k =~ /$search_regex/)
+                {
+                    $search_match = 1;
+                }
+                elsif ($search_type eq 'value' &&
+                       $val =~ /$search_regex/)
+                {
+                    $search_match = 1;
+                }
+
+                # If there's a search match, then output the data according to the preferred method
+                if ($search_match)
+                {
+                    if ($search_output eq 'key')
+                    {
+                        print "$k\r\n";
+                    }
+                    elsif ($search_output eq 'value')
+                    {
+                        print "$val\r\n";
+                    }
+                    elsif ($search_output eq 'key-value')
+                    {
+                        print "$k\r\n$val\r\n";
+                    }
+                    else
+                    {
+                        print STDERR "ERROR: unknown search output: $search_output\r\n";
+                        exit 1;
+                    }
+                }
+
+                # get the END
+                $_ = <$sock>;
+                $_ = <$sock>;
+            }
+        }
+    }
+    exit;
+}
+
+# delete keys
+if ($mode eq 'delete') {
+    while (<@delete>)
+    {
+        my $key = $_;
+        print $sock "delete $key\r\n";
     }
     exit;
 }
