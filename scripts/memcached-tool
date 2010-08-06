@@ -93,6 +93,12 @@ if ($mode eq 'dump') {
     print $sock "stats items\r\n";
 
     while (<$sock>) {
+	if (/^SERVER_ERROR /)
+	{
+	    print STDERR "Memcache failed to process the request.  Result was:\n\n";
+	    print STDERR $_;
+	    exit(1);
+	}
         last if /^END/;
         if (/^STAT items:(\d*):number (\d*)/) {
             $items{$1} = $2;
@@ -141,6 +147,12 @@ if ($mode eq 'search') {
     print $sock "stats items\r\n";
 
     while (<$sock>) {
+	if (/^SERVER_ERROR /)
+	{
+	    print STDERR "Memcache failed to process the request.  Result was:\n\n";
+	    print STDERR $_;
+	    exit(1);
+	}
         last if /^END/;
         if (/^STAT items:(\d*):number (\d*)/) {
             $items{$1} = $2;
