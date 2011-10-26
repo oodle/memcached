@@ -26,12 +26,14 @@ static void item_unlink_q(item *it);
 
 #define LARGEST_ID POWER_LARGEST
 typedef struct {
-    unsigned int evicted;
-    unsigned int evicted_nonzero;
+    uint64_t evicted;
+    uint64_t evicted_nonzero;
     rel_time_t evicted_time;
-    unsigned int reclaimed;
-    unsigned int outofmemory;
-    unsigned int tailrepairs;
+    uint64_t reclaimed;
+    uint64_t outofmemory;
+    uint64_t tailrepairs;
+    uint64_t expired_unfetched;
+    uint64_t evicted_unfetched;
 } itemstats_t;
 
 static item *heads[LARGEST_ID];
@@ -99,12 +101,14 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags, const rel_tim
     /* do a quick check if we have any expired items in the tail.. */
     int tries = 50;
     item *search;
+    rel_time_t oldest_live = settings.oldest_live;
 
     for (search = tails[id];
          tries > 0 && search != NULL;
          tries--, search=search->prev) {
         if (search->refcount == 0 &&
-            (search->exptime != 0 && search->exptime < current_time)) {
+            ((search->time < oldest_live) || // dead by flush
+             (search->exptime != 0 && search->exptime < current_time))) {
             it = search;
             /* I don't want to actually free the object, just steal
              * the item to avoid to grab the slab mutex twice ;-)
@@ -113,7 +117,14 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags, const rel_tim
             stats.reclaimed++;
             STATS_UNLOCK();
             itemstats[id].reclaimed++;
+            if ((it->it_flags & ITEM_FETCHED) == 0) {
+                STATS_LOCK();
+                stats.expired_unfetched++;
+                STATS_UNLOCK();
+                itemstats[id].expired_unfetched++;
+            }
             it->refcount = 1;
+            slabs_adjust_mem_requested(it->slabs_clsid, ITEM_ntotal(it), ntotal);
             do_item_unlink(it);
             /* Initialize the item block: */
             it->slabs_clsid = 0;
@@ -157,6 +168,12 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags, const rel_tim
                     itemstats[id].evicted_time = current_time - search->time;
                     if (search->exptime != 0)
                         itemstats[id].evicted_nonzero++;
+                    if ((search->it_flags & ITEM_FETCHED) == 0) {
+                        STATS_LOCK();
+                        stats.evicted_unfetched++;
+                        STATS_UNLOCK();
+                        itemstats[id].evicted_unfetched++;
+                    }
                     STATS_LOCK();
                     stats.evictions++;
                     STATS_UNLOCK();
@@ -165,6 +182,12 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags, const rel_tim
                     STATS_LOCK();
                     stats.reclaimed++;
                     STATS_UNLOCK();
+                    if ((search->it_flags & ITEM_FETCHED) == 0) {
+                        STATS_LOCK();
+                        stats.expired_unfetched++;
+                        STATS_UNLOCK();
+                        itemstats[id].expired_unfetched++;
+                    }
                 }
                 do_item_unlink(search);
                 break;
@@ -239,8 +262,13 @@ bool item_size_ok(const size_t nkey, const int flags, const int nbytes) {
     char prefix[40];
     uint8_t nsuffix;
 
-    return slabs_clsid(item_make_header(nkey + 1, flags, nbytes,
-                                        prefix, &nsuffix)) != 0;
+    size_t ntotal = item_make_header(nkey + 1, flags, nbytes,
+                                     prefix, &nsuffix);
+    if (settings.use_cas) {
+        ntotal += sizeof(uint64_t);
+    }
+
+    return slabs_clsid(ntotal) != 0;
 }
 
 static void item_link_q(item *it) { /* item is the new head */
@@ -401,21 +429,43 @@ void do_item_stats(ADD_STAT add_stats, void *c) {
             char key_str[STAT_KEY_LEN];
             char val_str[STAT_VAL_LEN];
             int klen = 0, vlen = 0;
-
+            int search = 50;
+            while (search > 0 &&
+                   tails[i] != NULL &&
+                   ((settings.oldest_live != 0 && /* Item flushd */
+                     settings.oldest_live <= current_time &&
+                     tails[i]->time <= settings.oldest_live) ||
+                    (tails[i]->exptime != 0 && /* and not expired */
+                     tails[i]->exptime < current_time))) {
+                --search;
+                if (tails[i]->refcount == 0) {
+                    do_item_unlink(tails[i]);
+                } else {
+                    break;
+                }
+            }
+            if (tails[i] == NULL) {
+                /* We removed all of the items in this slab class */
+                continue;
+            }
             APPEND_NUM_FMT_STAT(fmt, i, "number", "%u", sizes[i]);
             APPEND_NUM_FMT_STAT(fmt, i, "age", "%u", tails[i]->time);
             APPEND_NUM_FMT_STAT(fmt, i, "evicted",
-                                "%u", itemstats[i].evicted);
+                                "%llu", (unsigned long long)itemstats[i].evicted);
             APPEND_NUM_FMT_STAT(fmt, i, "evicted_nonzero",
-                                "%u", itemstats[i].evicted_nonzero);
+                                "%llu", (unsigned long long)itemstats[i].evicted_nonzero);
             APPEND_NUM_FMT_STAT(fmt, i, "evicted_time",
                                 "%u", itemstats[i].evicted_time);
             APPEND_NUM_FMT_STAT(fmt, i, "outofmemory",
-                                "%u", itemstats[i].outofmemory);
+                                "%llu", (unsigned long long)itemstats[i].outofmemory);
             APPEND_NUM_FMT_STAT(fmt, i, "tailrepairs",
-                                "%u", itemstats[i].tailrepairs);;
+                                "%llu", (unsigned long long)itemstats[i].tailrepairs);
             APPEND_NUM_FMT_STAT(fmt, i, "reclaimed",
-                                "%u", itemstats[i].reclaimed);;
+                                "%llu", (unsigned long long)itemstats[i].reclaimed);
+            APPEND_NUM_FMT_STAT(fmt, i, "expired_unfetched",
+                                "%llu", (unsigned long long)itemstats[i].expired_unfetched);
+            APPEND_NUM_FMT_STAT(fmt, i, "evicted_unfetched",
+                                "%llu", (unsigned long long)itemstats[i].evicted_unfetched);
         }
     }
 
@@ -450,9 +500,7 @@ void do_item_stats_sizes(ADD_STAT add_stats, void *c) {
         for (i = 0; i < num_buckets; i++) {
             if (histogram[i] != 0) {
                 char key[8];
-                int klen = 0;
-                klen = snprintf(key, sizeof(key), "%d", i * 32);
-                assert(klen < sizeof(key));
+                snprintf(key, sizeof(key), "%d", i * 32);
                 APPEND_STAT(key, "%u", histogram[i]);
             }
         }
@@ -498,12 +546,21 @@ item *do_item_get(const char *key, const size_t nkey) {
 
     if (it != NULL) {
         it->refcount++;
+        it->it_flags |= ITEM_FETCHED;
         DEBUG_REFCNT(it, '+');
     }
 
     if (settings.verbose > 2)
         fprintf(stderr, "\n");
 
+    return it;
+}
+
+item *do_item_touch(const char *key, size_t nkey, uint32_t exptime) {
+    item *it = do_item_get(key, nkey);
+    if (it != NULL) {
+        it->exptime = exptime;
+    }
     return it;
 }
 

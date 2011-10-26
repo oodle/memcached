@@ -377,7 +377,8 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
                     (unsigned long long)thread_stats.slab_stats[i].cas_hits);
             APPEND_NUM_STAT(i, "cas_badval", "%llu",
                     (unsigned long long)thread_stats.slab_stats[i].cas_badval);
-
+            APPEND_NUM_STAT(i, "touch_hits", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].touch_hits);
             total++;
         }
     }
@@ -436,5 +437,19 @@ void slabs_free(void *ptr, size_t size, unsigned int id) {
 void slabs_stats(ADD_STAT add_stats, void *c) {
     pthread_mutex_lock(&slabs_lock);
     do_slabs_stats(add_stats, c);
+    pthread_mutex_unlock(&slabs_lock);
+}
+
+void slabs_adjust_mem_requested(unsigned int id, size_t old, size_t ntotal)
+{
+    pthread_mutex_lock(&slabs_lock);
+    slabclass_t *p;
+    if (id < POWER_SMALLEST || id > power_largest) {
+        fprintf(stderr, "Internal error! Invalid slab class\n");
+        abort();
+    }
+
+    p = &slabclass[id];
+    p->requested = p->requested - old + ntotal;
     pthread_mutex_unlock(&slabs_lock);
 }
