@@ -10,6 +10,8 @@
 #   public domain.  I give up all rights to this
 #   tool.  modify and copy at will.
 #
+# Modifications:
+# 12/15/2009 - mmucklo@corp.oodle.com - added search and delete
 
 use strict;
 use IO::Socket::INET;
@@ -27,12 +29,12 @@ if ($mode eq "display") {
     undef $mode if $from < 6 || $from > 17;
     undef $mode if $to   < 6 || $to   > 17;
     print STDERR "ERROR: parameters out of range\n\n" unless $mode;
-} elsif ($mode eq 'delete') { # mmucklo - delete: a useful function we implemented at Oodle, Inc.
+} elsif ($mode eq 'delete') {
     @delete = @ARGV;
     @ARGV = ();
 } elsif ($mode eq 'dump') {
     ;
-} elsif ($mode eq 'search') { # mmucklo - search: a useful function we implemented at Oodle, Inc.
+} elsif ($mode eq 'search') {
     $search_type = shift;
     $search_output = shift;
     $search_regex = shift;
@@ -225,9 +227,8 @@ if ($mode eq 'search') {
 
 # delete keys
 if ($mode eq 'delete') {
-    while (<@delete>)
+    foreach my $key (@delete)
     {
-        my $key = $_;
         print $sock "delete $key\r\n";
     }
     exit;
