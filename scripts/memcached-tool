@@ -92,28 +92,28 @@ if ($mode eq 'dump') {
     my %items;
     my $totalitems;
 
-    print $sock "stats items\r\n";
-
+    print $sock "stats slabs\r\n";
     while (<$sock>) {
-	if (/^SERVER_ERROR /)
-	{
-	    print STDERR "Memcache failed to process the request.  Result was:\n\n";
-	    print STDERR $_;
-	    exit(1);
-	}
+        if (/^(?:SERVER_|CLIENT_|)ERROR/)
+        {
+            print STDERR "Memcache failed to process the request.  Result was:\n\n";
+            print STDERR $_;
+            exit(1);
+        }
         last if /^END/;
-        if (/^STAT items:(\d*):number (\d*)/) {
+        if (/^STAT (\d*):used_chunks (\d*)/) {
             $items{$1} = $2;
             $totalitems += $2;
         }
     }
+
     print STDERR "Dumping memcache contents\n";
     print STDERR "  Number of buckets: " . scalar(keys(%items)) . "\n";
     print STDERR "  Number of items  : $totalitems\n";
 
     foreach my $bucket (sort(keys(%items))) {
-        print STDERR "Dumping bucket $bucket - " . $items{$bucket} . " total items\n";
-        print $sock "stats cachedump $bucket $items{$bucket}\r\n";
+        print STDERR "Dumping bucket $bucket - about " . $items{$bucket} . " total items\n";
+        print $sock "stats cachedump $bucket 0 1\r\n"; # dump the whole bucket
         my %keyexp;
         while (<$sock>) {
             last if /^END/;
@@ -146,24 +146,23 @@ if ($mode eq 'search') {
     my %items;
     my $totalitems;
 
-    print $sock "stats items\r\n";
-
+    print $sock "stats slabs\r\n";
     while (<$sock>) {
-	if (/^SERVER_ERROR /)
-	{
-	    print STDERR "Memcache failed to process the request.  Result was:\n\n";
-	    print STDERR $_;
-	    exit(1);
-	}
+        if (/^(?:SERVER_|CLIENT_|)ERROR/)
+        {
+            print STDERR "Memcache failed to process the request.  Result was:\n\n";
+            print STDERR $_;
+            exit(1);
+        }
         last if /^END/;
-        if (/^STAT items:(\d*):number (\d*)/) {
+        if (/^STAT (\d*):used_chunks (\d*)/) {
             $items{$1} = $2;
             $totalitems += $2;
         }
     }
 
     foreach my $bucket (sort(keys(%items))) {
-        print $sock "stats cachedump $bucket $items{$bucket} 1\r\n";
+        print $sock "stats cachedump $bucket 0 1\r\n";
         my %keyexp;
         while (<$sock>) {
             last if /^END/;
