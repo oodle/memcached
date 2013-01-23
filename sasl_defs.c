@@ -5,6 +5,8 @@
 #include <string.h>
 #include <sasl/saslplug.h>
 
+char my_sasl_hostname[1025];
+
 #ifdef HAVE_SASL_CB_GETCONF
 /* The locations we may search for a SASL config file if the user didn't
  * specify one in the environment variable SASL_CONF_PATH
@@ -14,6 +16,10 @@ const char * const locations[] = {
     "/etc/sasl2/memcached.conf",
     NULL
 };
+#endif
+
+#ifndef HAVE_SASL_CALLBACK_FT
+typedef int (*sasl_callback_ft)(void);
 #endif
 
 #ifdef ENABLE_SASL_PWDB
@@ -139,7 +145,7 @@ static int sasl_log(void *context, int level, const char *message)
 
 static sasl_callback_t sasl_callbacks[] = {
 #ifdef ENABLE_SASL_PWDB
-   { SASL_CB_SERVER_USERDB_CHECKPASS, sasl_server_userdb_checkpass, NULL },
+   { SASL_CB_SERVER_USERDB_CHECKPASS, (sasl_callback_ft)sasl_server_userdb_checkpass, NULL },
 #endif
 
    { SASL_CB_LOG, (sasl_callback_ft)sasl_log, NULL },
@@ -164,6 +170,14 @@ void init_sasl(void) {
        sasl_callbacks[0].proc = NULL;
     }
 #endif
+
+    memset(my_sasl_hostname, 0, sizeof(my_sasl_hostname));
+    if (gethostname(my_sasl_hostname, sizeof(my_sasl_hostname)-1) == -1) {
+        if (settings.verbose) {
+            fprintf(stderr, "Error discovering hostname for SASL\n");
+        }
+        my_sasl_hostname[0] = '\0';
+    }
 
     if (sasl_server_init(sasl_callbacks, "memcached") != SASL_OK) {
         fprintf(stderr, "Error initializing sasl.\n");

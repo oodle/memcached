@@ -2,7 +2,7 @@
 
 use strict;
 use warnings;
-use Test::More tests => 3533;
+use Test::More tests => 3549;
 use FindBin qw($Bin);
 use lib "$Bin/lib";
 use MemcachedTest;
@@ -273,6 +273,10 @@ is($mc->decr("x", 211), 0, "Floor is zero");
     $check->("totouch", 0, "toast2");
 
     # Test miss as well
+    $mc->set("totouch", "toast3", 0, 1);
+    $res = $mc->touch("totouch", 1);
+    sleep 3;
+    $empty->("totouch");
 }
 
 # diag "Silent set.";
@@ -573,11 +577,15 @@ sub _handle_single_response {
     my $self = shift;
     my $myopaque = shift;
 
-    $self->{socket}->recv(my $response, ::MIN_RECV_BYTES);
-    Test::More::is(length($response), ::MIN_RECV_BYTES, "Expected read length");
+    my $hdr = "";
+    while(::MIN_RECV_BYTES - length($hdr) > 0) {
+        $self->{socket}->recv(my $response, ::MIN_RECV_BYTES - length($hdr));
+        $hdr .= $response;
+    }
+    Test::More::is(length($hdr), ::MIN_RECV_BYTES, "Expected read length");
 
     my ($magic, $cmd, $keylen, $extralen, $datatype, $status, $remaining,
-        $opaque, $ident_hi, $ident_lo) = unpack(::RES_PKT_FMT, $response);
+        $opaque, $ident_hi, $ident_lo) = unpack(::RES_PKT_FMT, $hdr);
     Test::More::is($magic, ::RES_MAGIC, "Got proper response magic");
 
     my $cas = ($ident_hi * 2 ** 32) + $ident_lo;

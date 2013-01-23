@@ -69,7 +69,7 @@ memcached_debug_dtrace.o: $(memcached_debug_OBJECTS)
 
 SUBDIRS = doc
 DIST_DIRS = scripts
-EXTRA_DIST = doc scripts t memcached.spec memcached_dtrace.d version.m4
+EXTRA_DIST = doc scripts t memcached.spec memcached_dtrace.d version.m4 README.md
 
 MOSTLYCLEANFILES = *.gcov *.gcno *.gcda *.tcov
 
@@ -103,3 +103,16 @@ docs:
 
 dist-hook:
 	rm -f $(distdir)/*/*~ $(distdir)/t/lib/*~ $(distdir)/*~
+
+maintainer-clean-local:
+	-rm Makefile.in
+	-rm aclocal.m4
+	-rm config.guess
+	-rm config.sub
+	-rm depcomp
+	-rm install-sh
+	-rm ltmain.sh
+	-rm missing
+	-rm configure
+	-rm config.log
+	-rm config.status
