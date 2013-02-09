@@ -19,7 +19,7 @@ use IO::Socket::INET;
 my $addr = shift;
 my $mode = shift || "display";
 my ($from, $to);
-my (@delete, $search, $search_type, $search_output, $search_regex);
+my (@delete, $search, $search_type, $search_output, $search_regex, $key);
 
 if ($mode eq "display") {
     undef $mode if @ARGV;
@@ -34,6 +34,8 @@ if ($mode eq "display") {
     @ARGV = ();
 } elsif ($mode eq 'dump') {
     ;
+} elsif ($mode eq 'get') {
+    $key = shift;
 } elsif ($mode eq 'search') {
     $search_type = shift;
     $search_output = shift;
@@ -142,6 +144,25 @@ if ($mode eq 'dump') {
     exit;
 }
 
+if ($mode eq 'get') 
+{
+    print $sock "get $key\r\n";
+    my $response = <$sock>;
+    if ($response =~ /VALUE (\S+) (\d+) (\d+)/) {
+        my $flags = $2;
+        my $len = $3;
+        my $val;
+        read $sock, $val, $len;
+	print $val;
+	print "\n";
+        my $search_match = 0;
+        # get the END
+        $_ = <$sock>;
+        $_ = <$sock>;
+    }
+    exit;
+}
+
 if ($mode eq 'search') {
     my %items;
     my $totalitems;
@@ -174,6 +195,16 @@ if ($mode eq 'search') {
         }
 
         foreach my $k (keys(%keyexp)) {
+                my $search_match = 0;
+           if ($search_type eq 'key' &&
+                 $k !~ /$search_regex/)
+            {
+                next;
+            }
+	    else
+	    {
+		$search_match = 1;
+	    }
             print $sock "get $k\r\n";
             my $response = <$sock>;
             if ($response =~ /VALUE (\S+) (\d+) (\d+)/) {
@@ -181,13 +212,7 @@ if ($mode eq 'search') {
                 my $len = $3;
                 my $val;
                 read $sock, $val, $len;
-                my $search_match = 0;
-                if ($search_type eq 'key' &&
-                    $k =~ /$search_regex/)
-                {
-                    $search_match = 1;
-                }
-                elsif ($search_type eq 'value' &&
+                if ($search_type eq 'value' &&
                        $val =~ /$search_regex/)
                 {
                     $search_match = 1;
